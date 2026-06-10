@@ -434,7 +434,7 @@ STOP_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), STOP_F
 def controlled_sleep(minutes):
     start_time = time.time()
     end_time = start_time + (minutes * 60)
-    
+
     while time.time() < end_time:
         if stop_file_exists(STOP_FILE_PATH):
             # Log or print that we detected the stop file and are breaking out of sleep
@@ -1658,7 +1658,7 @@ class P4Target(P4Base):
         """Replicate first change when historical start specified"""
 
         newChangeId = None
-        openedFiles = self.p4cmd('reconcile', '-mead', '//%s/...' % self.p4.client)
+        openedFiles = self.p4cmd('reconcile', '-meadf', '//%s/...' % self.p4.client)
         lenOpenedFiles = len(openedFiles)
         if lenOpenedFiles > 0:
             description = self.formatChangeDescription(
