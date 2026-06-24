@@ -434,7 +434,7 @@ STOP_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), STOP_F
 def controlled_sleep(minutes):
     start_time = time.time()
     end_time = start_time + (minutes * 60)
-
+    
     while time.time() < end_time:
         if stop_file_exists(STOP_FILE_PATH):
             # Log or print that we detected the stop file and are breaking out of sleep
@@ -1480,7 +1480,7 @@ class P4Target(P4Base):
                 self.p4cmd('edit', '-t', f.type, f.localFile)
                 if self.p4.warnings:
                     # Check for file not present - likely to be a purged or archived previous version
-                    self.p4cmd('add', '-ft', f.type, f.fixedLocalFile)
+                    self.p4cmd('add', '-f', '-I', '-t', f.type, f.fixedLocalFile)
                     self.logger.warning('Edit turned into Add due to previous revision not available')
                 if diskFileContentModified(f):
                     self.logger.warning('Resyncing source due to file content changes')
@@ -1494,7 +1494,7 @@ class P4Target(P4Base):
                     self.replicateBranch(f, dirty=True)
                 else:
                     self.logger.debug('processing:0020 add')
-                    output = self.p4cmd('add', '-ft', f.type, f.fixedLocalFile)
+                    output = self.p4cmd('add', '-f', '-I', '-t', f.type, f.fixedLocalFile)
                     if len(output) > 0 and self.re_cant_add_existing_file.search(str(output[-1])):
                         self.p4cmd('sync', '-k', f.fixedLocalFile)
                         self.p4cmd('edit', '-t', f.type, f.fixedLocalFile)
@@ -1512,7 +1512,7 @@ class P4Target(P4Base):
                 self.p4cmd('sync', '-k', f.localFile)
                 self.p4cmd('edit', '-t', f.type, f.localFile)
                 if self.p4.warnings:
-                    self.p4cmd('add', '-ft', f.type, f.fixedLocalFile)
+                    self.p4cmd('add', '-f', '-I', '-t', f.type, f.fixedLocalFile)
             elif f.action == 'branch':
                 self.replicateBranch(f, dirty=False)
             elif f.action == 'integrate':
@@ -1574,7 +1574,7 @@ class P4Target(P4Base):
                         if "can't change +l type with reopen; use revert -k and then edit -t to change type." in str(result):
                             self.logger.warning(f"Issue identified with file {ofile['depotFile']} suggesting to use 'revert -k' and type change.")
                             self.p4cmd('revert', '-k', ofile['depotFile'])
-                            self.p4cmd('add', '-t', chRev.type, ofile['depotFile'])
+                            self.p4cmd('add', '-f', '-I', '-t', chRev.type, ofile['depotFile'])
                             self.p4cmd('edit', '-t', chRev.type, ofile['depotFile'])
                     else:
                         self.p4cmd('reopen', '-t', chRev.type, ofile['depotFile'])
@@ -1651,6 +1651,10 @@ class P4Target(P4Base):
             self.reverifyRevisions(result)
 
         self.logger.info("source = {} : target = {}".format(change['change'], newChangeId))
+        if newChangeId is None and not self.filesToIgnore:
+            raise P4TLogicException(
+                "No files opened for source change %s — target may already contain these files"
+                % change['change'])
         self.validateSubmittedChange(newChangeId, fileRevs)
         return newChangeId
 
@@ -1658,7 +1662,7 @@ class P4Target(P4Base):
         """Replicate first change when historical start specified"""
 
         newChangeId = None
-        openedFiles = self.p4cmd('reconcile', '-meadf', '//%s/...' % self.p4.client)
+        openedFiles = self.p4cmd('reconcile', '-meadI', '//%s/...' % self.p4.client)
         lenOpenedFiles = len(openedFiles)
         if lenOpenedFiles > 0:
             description = self.formatChangeDescription(
@@ -1778,7 +1782,7 @@ class P4Target(P4Base):
                 self.src.p4cmd('sync', '-f', file.localFileRev())
         else:
             self.logger.debug('processing:0105 move/add converted to add')
-            self.p4cmd('add', '-ft', file.type, file.fixedLocalFile)
+            self.p4cmd('add', '-f', '-I', '-t', file.type, file.fixedLocalFile)
 
     def updateChange(self, change, newChangeId):
         # need to update the user and time stamp - but only if a superuser
@@ -1850,11 +1854,11 @@ class P4Target(P4Base):
                     if (file.getIntegration(ind).localFile == file.localFile) or \
                             (file.numIntegrations() > 1):
                         self.doIntegrate(file.localIntegSource(ind), file.localFile)
-                        self.p4cmd('add', '-ft', file.type, file.fixedLocalFile)
+                        self.p4cmd('add', '-I', '-ft', file.type, file.fixedLocalFile)
                     else:
                         # "add from" is rather an odd beast - recreate as move after back out of delete
                         self.p4cmd('sync', file.localIntegSyncSource(ind))
-                        self.p4cmd('add', file.getIntegration(ind).localFile)
+                        self.p4cmd('add', '-I', file.getIntegration(ind).localFile)
                         makeWritable(file.fixedLocalFile)
                         os.remove(file.fixedLocalFile)
                         self.p4cmd('move', file.getIntegration(ind).localFile, file.fixedLocalFile)
@@ -1869,7 +1873,7 @@ class P4Target(P4Base):
                     self.p4cmd('undo', "%s#%d" % (file.localFile, file._integrations[ind].erev + 1))
                     if diskFileContentModified(file):
                         if file.action == 'add':
-                            self.p4cmd('add', file.localFile)
+                            self.p4cmd('add', '-I', file.localFile)
                         else:
                             self.p4cmd('edit', file.localFile)
                         self.src.p4cmd('sync', '-f', file.localFileRev())
@@ -1885,7 +1889,7 @@ class P4Target(P4Base):
                     afterAdd = True     # This will fire further integrations
                     if outputDict and 'action' in outputDict and outputDict['action'] == 'delete':
                         self.p4cmd('resolve', '-at', file.localFile)
-                        self.p4cmd('add', file.localFile)
+                        self.p4cmd('add', '-I', file.localFile)
                         edited = True
                         added = True
                     if dirty and not edited:
@@ -1902,11 +1906,11 @@ class P4Target(P4Base):
                     elif self.options.historical_start_change and self.branchContentsChanged(file, outputDict):
                         # If the source of a branched file is different to target then it should be an add not a branch
                         self.logger.debug('processing:0225 branch demoted to add due to content changes')
-                        self.p4cmd('add', file.localFile)
+                        self.p4cmd('add', '-I', file.localFile)
                         self.src.p4cmd('sync', '-f', file.localFileRev())
         else:
             self.logger.debug('processing:0230 add')
-            output = self.p4cmd('add', '-ft', file.type, file.fixedLocalFile)
+            output = self.p4cmd('add', '-I', '-ft', file.type, file.fixedLocalFile)
             if len(output) > 0 and self.re_cant_add_existing_file.search(str(output[-1])):
                 self.p4cmd('sync', '-k', file.fixedLocalFile)
                 self.p4cmd('edit', '-t', file.type, file.fixedLocalFile)
@@ -2198,7 +2202,7 @@ class P4Target(P4Base):
                             editedFrom = True
                             if afterAdd:
                                 self.logger.debug('Redoing add to avoid problems after forced integrate')
-                                self.p4cmd('add', '-d', file.localFile)
+                                self.p4cmd('add', '-d', '-I', file.localFile)
                         elif self.re_resolve_tampered.search(str(resolve_result)):
                             self.p4cmd('edit', file.localFile)
                             self.src.p4cmd('sync', '-f', file.localFileRev())
@@ -2213,7 +2217,7 @@ class P4Target(P4Base):
                             self.editFrom(file, self.currentFileContent)
                             if afterAdd:
                                 self.logger.debug('Redoing add to avoid problems after forced integrate')
-                                self.p4cmd('add', '-d', file.localFile)
+                                self.p4cmd('add', '-d', '-I', file.localFile)
                     elif integ.how == 'branch from':
                         self.logger.debug('processing:0355 branch from - interactive -at')
                         self.p4.run_resolve(resolver=EditAcceptTheirs())
@@ -2236,11 +2240,11 @@ class P4Target(P4Base):
                 if self.p4.warnings and self.re_no_such_file.search("\n".join(self.p4.warnings)):
                     newAction = 'add'
                     # self.src.p4cmd('sync', '-f', file.localFileRev())
-                    self.p4cmd('add', '-ft', file.type, file.fixedLocalFile)
+                    self.p4cmd('add', '-I', '-ft', file.type, file.fixedLocalFile)
                 else:
                     self.p4cmd('edit', '-t', file.type, file.localFile)
                     if self.p4.warnings and self.re_file_not_on_client.search("\n".join(self.p4.warnings)):
-                        self.p4cmd('add', file.localFile)
+                        self.p4cmd('add', '-I', file.localFile)
                 self.logger.debug('processing:0376 %s turned into historical %s' % (file.action, newAction))
                 if diskFileContentModified(file):
                     self.src.p4cmd('sync', '-f', file.localFileRev())
@@ -2282,7 +2286,7 @@ class P4Target(P4Base):
             ensureDirectory(os.path.dirname(fpath))
             with open(fpath, "a") as fh:
                 fh.write("sourceP4Port,sourceChangeNo,targetChangeNo\n")
-            output = self.p4cmd('reconcile', fpath)[0]
+            output = self.p4cmd('reconcile', '-I', fpath)[0]
             if output['action'] == 'add':
                 self.p4cmd('reopen', '-t', 'text+CS32', fpath)
         chg = self.p4.fetch_change()
@@ -2773,3 +2777,4 @@ if __name__ == '__main__':
         print(str(e))
         result = 1
     sys.exit(result)
+
