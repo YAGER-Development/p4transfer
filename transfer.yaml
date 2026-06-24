@@ -1,4 +1,3 @@
-
 # Save this output to a file to e.g. transfer.yaml and edit it for your configuration
 
 # counter_name: Unique counter on target server to use for recording source changes processed. No spaces.
@@ -20,7 +19,14 @@ case_sensitive: false
 #    revision ranges - thus slowing down transfers.
 #    If not set, or 0 then transfer starts from the value of counter_name above, and assumes that ALL HISTORY
 #    of included files is transferred.
-historical_start_change: 1533535
+#
+# Note: maybe, we can leave this empty if we just start from whatever is the first submit on '//yes/main'.
+historical_start_change: 1436324
+
+# Without this being 'true', almost no files get submitted to target. It seems like that's
+# because it can't resolve the files having been integrated from other stream (code drop). Setting this
+# to 'false' would require also mirroring/transferring all the source streams of files that are present in //yes/main.
+ignore_integrations: true
 
 # instance_name: Name of the instance of P4Transfer - for emails etc. Spaces allowed.
 instance_name: Perforce Transfer from XYZ
@@ -54,10 +60,10 @@ mail_server:
 # Such values should be quoted (in order to be treated as strings)
 # -------------------------------------------------------------------------------
 # sleep_on_error_interval (Integer): How long (in minutes) to sleep when error is encountered in the script
-sleep_on_error_interval: 30
+sleep_on_error_interval: 15
 
 # poll_interval (Integer): How long (in minutes) to wait between polling source server for new changes
-poll_interval: 30
+poll_interval: 15
 
 # change_batch_size (Integer): changelists are processed in batches of this size
 change_batch_size: 1000
@@ -85,7 +91,7 @@ max_logfile_size: 20 * 1024 * 1024
 # change_description_format: The standard format for transferred changes.
 #    Keywords prefixed with $. Use \\n for newlines. Keywords allowed:
 #     $sourceDescription, $sourceChange, $sourcePort, $sourceUser
-change_description_format: \"$sourceDescription\\n\\nTransferred from 
+change_description_format: \"$sourceDescription\\n\\nTransferred from
   p4://$sourcePort@$sourceChange\"
 
 # change_map_file: Name of an (optional) CSV file listing mappings of source/target changelists.
@@ -111,33 +117,33 @@ superuser: y
 ignore_files:
 
 source:
-    # P4PORT to connect to, e.g. some-server:1666 - if this is on localhost and you just
-    # want to specify port number, then use quotes: "1666"
+  # P4PORT to connect to, e.g. some-server:1666 - if this is on localhost and you just
+  # want to specify port number, then use quotes: "1666"
   p4port: perforce:1666
-    # P4USER to use
+  # P4USER to use
   p4user: Builder
-    # P4CLIENT to use, e.g. p4-transfer-client
+  # P4CLIENT to use, e.g. p4-transfer-client
   p4client: Builder_linux-vbuilder-002_yes-p4-transfer-source
     # P4PASSWD for the user - valid password. If blank then no login performed.
     # Recommended to make sure user is in a group with a long password timeout!.
-    # Make sure your P4TICKETS file is correctly found in the environment
-  p4passwd: Fte9N8TJ
-    # P4CHARSET to use, e.g. none, utf8, etc - leave blank for non-unicode p4d instance
+  # Make sure your P4TICKETS file is correctly found in the environment
+  p4passwd:
+  # P4CHARSET to use, e.g. none, utf8, etc - leave blank for non-unicode p4d instance
   p4charset:
 
 target:
-    # P4PORT to connect to, e.g. some-server:1666 - if this is on localhost and you just
-    # want to specify port number, then use quotes: "1666"
-  p4port: yes-edge-bln.yager.local:1666
-    # P4USER to use
+  # P4PORT to connect to, e.g. some-server:1666 - if this is on localhost and you just
+  # want to specify port number, then use quotes: "1666"
+  p4port: yes-p4.yager.local:1666
+  # P4USER to use
   p4user: builder
-    # P4CLIENT to use, e.g. p4-transfer-client
+  # P4CLIENT to use, e.g. p4-transfer-client
   p4client: builder_linux-vbuilder-002_yes-p4-transfer-target
     # P4PASSWD for the user - valid password. If blank then no login performed.
     # Recommended to make sure user is in a group with a long password timeout!
-    # Make sure your P4TICKETS file is correctly found in the environment
-  p4passwd: Dutiful1.Paging.Caption.Affluent.Savings.Pumice
-    # P4CHARSET to use, e.g. none, utf8, etc - leave blank for non-unicode p4d instance
+  # Make sure your P4TICKETS file is correctly found in the environment
+  p4passwd:
+  # P4CHARSET to use, e.g. none, utf8, etc - leave blank for non-unicode p4d instance
   p4charset: utf8
 
 # workspace_root: Root directory to use for both client workspaces.
@@ -158,7 +164,7 @@ views:
 #    This will be setup as a mainline stream, with no sharing and with import+ mappings
 #    It is in standard stream name format, e.g. //<depot>/<name> or //<depot>/<mid>/<name>
 #    e.g. transfer_target_stream: //targ_streams/transfer_target
-transfer_target_stream: //yes/p4transfer_target
+transfer_target_stream: //YES/p4transfer_target
 
 # stream_views: An array of source/target stream view mappings and other record fields.
 #    You are not allowed to specify both 'views' and 'stream_views' - leave one or other blank
@@ -169,8 +175,8 @@ transfer_target_stream: //yes/p4transfer_target
 #    Field 'type:' has allowed values: mainline, development, release
 #    Field 'parent:' should specify a suitable parent if you are creating development or release streams.
 stream_views:
-- src: //yes/main
-  targ: //yes/main
-  type: mainline
-  parent: ''
+  - src: //YES/main
+    targ: //YES/mirror
+    type: mainline
+    parent: ''
 
