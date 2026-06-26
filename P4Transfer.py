@@ -64,6 +64,7 @@ import hashlib
 import stat
 import pprint
 import errno
+import json
 from string import Template
 import argparse
 import textwrap
@@ -140,12 +141,71 @@ class P4TConfigException(P4TException):
     pass
 
 
+class P4TFileTransferException(P4TException):
+    """Raised when unrecoverable file errors occurred during changelist transfer"""
+    pass
+
+
+def _is_enoent_error(exc):
+    """Check if an exception is a 'No such file or directory' error"""
+    if isinstance(exc, (OSError, IOError)):
+        return exc.errno == errno.ENOENT
+    if isinstance(exc, P4.P4Exception):
+        return 'No such file or directory' in str(exc)
+    return False
+
+
+def load_checkpoint():
+    """Load checkpoint file if it exists, return dict or None"""
+    if os.path.exists(CHECKPOINT_FILE):
+        with open(CHECKPOINT_FILE, 'r') as f:
+            return json.load(f)
+    return None
+
+
+def save_checkpoint(change, processed_files):
+    """Save checkpoint to disk"""
+    data = {'change': str(change), 'processed_files': list(processed_files)}
+    with open(CHECKPOINT_FILE, 'w') as f:
+        json.dump(data, f, indent=2)
+
+
+def delete_checkpoint():
+    """Delete checkpoint file if it exists"""
+    if os.path.exists(CHECKPOINT_FILE):
+        os.remove(CHECKPOINT_FILE)
+
+
+def load_failed_files():
+    """Load failed files record if it exists, return dict or None"""
+    if os.path.exists(FAILED_FILES_FILE):
+        with open(FAILED_FILES_FILE, 'r') as f:
+            return json.load(f)
+    return None
+
+
+def save_failed_files(change, failed_files_list):
+    """Save failed files record to disk"""
+    data = {'change': str(change), 'failed_files': failed_files_list}
+    with open(FAILED_FILES_FILE, 'w') as f:
+        json.dump(data, f, indent=2)
+
+
+def delete_failed_files():
+    """Delete failed files record if it exists"""
+    if os.path.exists(FAILED_FILES_FILE):
+        os.remove(FAILED_FILES_FILE)
+
+
 CONFIG_FILE = 'transfer.yaml'
 GENERAL_SECTION = 'general'
 SOURCE_SECTION = 'source'
 TARGET_SECTION = 'target'
 LOGGER_NAME = "P4Transfer"
 CHANGE_MAP_DESC = "Updated change_map_file"
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+CHECKPOINT_FILE = os.path.join(SCRIPT_DIR, '.p4transfer_checkpoint.json')
+FAILED_FILES_FILE = os.path.join(SCRIPT_DIR, '.p4transfer_failed_files.json')
 
 # This is for writing to sample config file
 DEFAULT_CONFIG = yaml.load(r"""
@@ -1453,14 +1513,116 @@ class P4Target(P4Base):
                 ))
         chRev.deleteIntegrations(integsToDelete)
 
-    def processChangeRevs(self, fileRevs, specialMoveRevs, srcFileLogs):
-        "Process all revisions in the change"
+    def _processOneFileRev(self, f):
+        "Process a single file revision - extracted for retry logic"
+        if self.options.historical_start_change:
+            self.adjustTargetHistoricalIntegrations(f)
+        if self.ignoreFile(f.localFile):
+            self.logger.warning("Ignoring file: %s#%s" % (f.depotFile, f.rev))
+            self.filesToIgnore.append(f.localFile)
+        elif f.action == 'edit':
+            self.logger.debug('processing:0010 edit')
+            self.p4cmd('sync', '-k', f.localFile)
+            self.p4cmd('edit', '-t', f.type, f.localFile)
+            if self.p4.warnings:
+                # Check for file not present - likely to be a purged or archived previous version
+                self.p4cmd('add', '-f', '-I', '-t', f.type, escapeWildCards(f.fixedLocalFile))
+                self.logger.warning('Edit turned into Add due to previous revision not available')
+            if diskFileContentModified(f):
+                self.logger.warning('Resyncing source due to file content changes')
+                self.src.p4cmd('sync', '-f', f.localFileRev())
+        elif f.action == 'add' or f.action == 'import':
+            if f.hasMoveIntegrations():
+                self.moveAdd(f)
+                if f.numIntegrations() > 1:
+                    self.replicateIntegration(f, afterAdd=True)
+            elif f.hasIntegrations():
+                self.replicateBranch(f, dirty=True)
+            else:
+                self.logger.debug('processing:0020 add')
+                output = self.p4cmd('add', '-f', '-I', '-t', f.type, escapeWildCards(f.fixedLocalFile))
+                if len(output) > 0 and self.re_cant_add_existing_file.search(str(output[-1])):
+                    self.p4cmd('sync', '-k', f.fixedLocalFile)
+                    self.p4cmd('edit', '-t', f.type, f.fixedLocalFile)
+        elif f.action == 'delete':
+            if f.hasIntegrations() and not f.hasOnlyMovedFromIntegrations():
+                self.replicateIntegration(f)
+            else:
+                self.logger.debug('processing:0030 delete')
+                self.replicateDelete(f)
+        elif f.action == 'purge':
+            # special case. Type of file is +S, and source.sync removed the file
+            # create a temporary file, it will be overwritten again later
+            self.logger.debug('processing:0040 purge')
+            writeContents(f.fixedLocalFile, 'purged file')
+            self.p4cmd('sync', '-k', f.localFile)
+            self.p4cmd('edit', '-t', f.type, f.localFile)
+            if self.p4.warnings:
+                self.p4cmd('add', '-f', '-I', '-t', f.type, escapeWildCards(f.fixedLocalFile))
+        elif f.action == 'branch':
+            self.replicateBranch(f, dirty=False)
+        elif f.action == 'integrate':
+            self.replicateIntegration(f)
+        elif f.action == 'move/add':
+            self.moveAdd(f)
+            if f.numIntegrations() > 1:
+                self.replicateIntegration(f, afterAdd=True)
+        elif f.action == 'archive':
+            self.logger.warning("Ignoring archived revision: %s#%s" % (f.depotFile, f.rev))
+            self.filesToIgnore.append(f.localFile)
+        else:
+            raise P4TLogicException('Unknown action: %s for %s' % (f.action, str(f)))
+
+    def _forceSyncFile(self, f):
+        "Force-sync a file from both source and target to recover missing local files"
+        self.logger.warning("Force-syncing file from source: %s" % f.localFileRev())
+        self.src.p4cmd('sync', '-f', f.localFileRev())
+        self.logger.warning("Force-syncing file from target: %s" % f.localFile)
+        with self.p4.at_exception_level(P4.P4.RAISE_NONE):
+            self.p4cmd('sync', '-f', f.localFile)
+
+    def processChangeRevs(self, fileRevs, specialMoveRevs, srcFileLogs, sourceChangeNum=None):
+        "Process all revisions in the change with per-file error recovery and checkpointing"
         self.srcFileLogs = {}
         self.targFileLogs = {}
         for f in srcFileLogs:
             self.srcFileLogs[f.depotFile] = f
+
+        # Load checkpoint to skip already-processed files
+        checkpoint = load_checkpoint()
+        processedFiles = set()
+        if checkpoint and sourceChangeNum and str(checkpoint.get('change')) == str(sourceChangeNum):
+            processedFiles = set(checkpoint.get('processed_files', []))
+            self.logger.info("Resuming from checkpoint: %d files already processed for change %s" % (
+                len(processedFiles), sourceChangeNum))
+        elif checkpoint:
+            # Stale checkpoint for a different change - delete it
+            self.logger.info("Deleting stale checkpoint for change %s (current: %s)" % (
+                checkpoint.get('change'), sourceChangeNum))
+            delete_checkpoint()
+
+        # Load existing failed files to re-attempt them
+        failedFilesRecord = load_failed_files()
+        if failedFilesRecord and sourceChangeNum and str(failedFilesRecord.get('change')) == str(sourceChangeNum):
+            self.logger.info("Found %d previously failed files to re-attempt for change %s" % (
+                len(failedFilesRecord.get('failed_files', [])), sourceChangeNum))
+            # Remove previously failed files from processedFiles so they get re-attempted
+            prevFailedKeys = set()
+            for ff in failedFilesRecord.get('failed_files', []):
+                key = "%s#%s" % (ff['depot_file'], ff['rev'])
+                prevFailedKeys.add(key)
+            processedFiles -= prevFailedKeys
+            delete_failed_files()
+
+        failedFiles = []
         numProcessed = 0
+        numSuccessful = len(processedFiles)
         for f in fileRevs:
+            fileKey = f.depotFileRev()
+            if fileKey in processedFiles:
+                self.logger.debug("Skipping already-processed file: %s" % fileKey)
+                continue
+
             numProcessed += 1
             if self.options.reset_connection and numProcessed % self.options.reset_connection == 0:
                 self.logger.info("Resetting source connection after %d files processed" % numProcessed)
@@ -1469,63 +1631,58 @@ class P4Target(P4Base):
             self.logger.debug('targ: %s' % f)
             self.currentFileContent = None
 
-            if self.options.historical_start_change:
-                self.adjustTargetHistoricalIntegrations(f)
-            if self.ignoreFile(f.localFile):
-                self.logger.warning("Ignoring file: %s#%s" % (f.depotFile, f.rev))
-                self.filesToIgnore.append(f.localFile)
-            elif f.action == 'edit':
-                self.logger.debug('processing:0010 edit')
-                self.p4cmd('sync', '-k', f.localFile)
-                self.p4cmd('edit', '-t', f.type, f.localFile)
-                if self.p4.warnings:
-                    # Check for file not present - likely to be a purged or archived previous version
-                    self.p4cmd('add', '-f', '-I', '-t', f.type, escapeWildCards(f.fixedLocalFile))
-                    self.logger.warning('Edit turned into Add due to previous revision not available')
-                if diskFileContentModified(f):
-                    self.logger.warning('Resyncing source due to file content changes')
-                    self.src.p4cmd('sync', '-f', f.localFileRev())
-            elif f.action == 'add' or f.action == 'import':
-                if f.hasMoveIntegrations():
-                    self.moveAdd(f)
-                    if f.numIntegrations() > 1:
-                        self.replicateIntegration(f, afterAdd=True)
-                elif f.hasIntegrations():
-                    self.replicateBranch(f, dirty=True)
-                else:
-                    self.logger.debug('processing:0020 add')
-                    output = self.p4cmd('add', '-f', '-I', '-t', f.type, escapeWildCards(f.fixedLocalFile))
-                    if len(output) > 0 and self.re_cant_add_existing_file.search(str(output[-1])):
-                        self.p4cmd('sync', '-k', f.fixedLocalFile)
-                        self.p4cmd('edit', '-t', f.type, f.fixedLocalFile)
-            elif f.action == 'delete':
-                if f.hasIntegrations() and not f.hasOnlyMovedFromIntegrations():
-                    self.replicateIntegration(f)
-                else:
-                    self.logger.debug('processing:0030 delete')
-                    self.replicateDelete(f)
-            elif f.action == 'purge':
-                # special case. Type of file is +S, and source.sync removed the file
-                # create a temporary file, it will be overwritten again later
-                self.logger.debug('processing:0040 purge')
-                writeContents(f.fixedLocalFile, 'purged file')
-                self.p4cmd('sync', '-k', f.localFile)
-                self.p4cmd('edit', '-t', f.type, f.localFile)
-                if self.p4.warnings:
-                    self.p4cmd('add', '-f', '-I', '-t', f.type, escapeWildCards(f.fixedLocalFile))
-            elif f.action == 'branch':
-                self.replicateBranch(f, dirty=False)
-            elif f.action == 'integrate':
-                self.replicateIntegration(f)
-            elif f.action == 'move/add':
-                self.moveAdd(f)
-                if f.numIntegrations() > 1:
-                    self.replicateIntegration(f, afterAdd=True)
-            elif f.action == 'archive':
-                self.logger.warning("Ignoring archived revision: %s#%s" % (f.depotFile, f.rev))
-                self.filesToIgnore.append(f.localFile)
+            # Per-file retry logic for ENOENT errors
+            maxAttempts = 3
+            success = False
+            lastError = None
+            for attempt in range(1, maxAttempts + 1):
+                try:
+                    self._processOneFileRev(f)
+                    success = True
+                    break
+                except (OSError, IOError, P4.P4Exception) as e:
+                    if not _is_enoent_error(e):
+                        raise  # Non-ENOENT errors propagate normally
+                    lastError = e
+                    if attempt < maxAttempts:
+                        self.logger.warning(
+                            "ENOENT error on attempt %d/%d for %s: %s — force-syncing and retrying" % (
+                                attempt, maxAttempts, f.depotFileRev(), str(e)))
+                        self._forceSyncFile(f)
+                    else:
+                        self.logger.error(
+                            "ENOENT error on attempt %d/%d for %s: %s — recording as failed" % (
+                                attempt, maxAttempts, f.depotFileRev(), str(e)))
+
+            if success:
+                numSuccessful += 1
+                processedFiles.add(fileKey)
+                # Write checkpoint every 100 successfully processed files
+                if numSuccessful % 100 == 0:
+                    save_checkpoint(sourceChangeNum, processedFiles)
+                    self.logger.debug("Checkpoint saved: %d files processed" % numSuccessful)
             else:
-                raise P4TLogicException('Unknown action: %s for %s' % (f.action, str(f)))
+                failedFiles.append({
+                    'depot_file': f.depotFile,
+                    'rev': str(f.rev),
+                    'action': f.action,
+                    'error': str(lastError)
+                })
+
+        # Save final checkpoint
+        if sourceChangeNum:
+            save_checkpoint(sourceChangeNum, processedFiles)
+
+        # Handle failed files
+        if failedFiles:
+            save_failed_files(sourceChangeNum, failedFiles)
+            self.logger.error(
+                "%d file(s) failed unrecoverably for change %s. Details saved to %s" % (
+                    len(failedFiles), sourceChangeNum, FAILED_FILES_FILE))
+            for ff in failedFiles:
+                self.logger.error("  Failed: %s#%s (%s): %s" % (
+                    ff['depot_file'], ff['rev'], ff['action'], ff['error']))
+
         for f in specialMoveRevs:  # There won't be any if not supported
             self.logger.debug('targ: moves %s' % f)
             # These have to be replayed as something like: p4 copy src/... targ/...
@@ -1585,7 +1742,16 @@ class P4Target(P4Base):
         self.renameOfDeletedFileEncountered = False
         self.resolveDeleteEncountered = False
         self.filesToIgnore = []
-        self.processChangeRevs(fileRevs, specialMoveRevs, srcFileLogs)
+        self.processChangeRevs(fileRevs, specialMoveRevs, srcFileLogs, sourceChangeNum=change['change'])
+
+        # If any files failed unrecoverably, do NOT submit — preserve opened files and stop
+        failedFilesRecord = load_failed_files()
+        if failedFilesRecord and str(failedFilesRecord.get('change')) == str(change['change']):
+            raise P4TFileTransferException(
+                "Changelist %s has %d unrecoverable file error(s). "
+                "Fix the issues listed in %s and re-run the script to resume." % (
+                    change['change'], len(failedFilesRecord['failed_files']), FAILED_FILES_FILE))
+
         newChangeId = None
 
         openedFiles = self.p4cmd('opened')
@@ -1649,6 +1815,9 @@ class P4Target(P4Base):
             newChangeId = result[a]['submittedChange']
             self.updateChange(change, newChangeId)
             self.reverifyRevisions(result)
+            # Successful submit — clean up checkpoint and failed files
+            delete_checkpoint()
+            delete_failed_files()
 
         self.logger.info("source = {} : target = {}".format(change['change'], newChangeId))
         if newChangeId is None and not self.filesToIgnore:
@@ -2471,7 +2640,14 @@ class P4Transfer(object):
             raise P4TConfigException('Required option %s not found in section %s' % (option, p4config.section))
 
     def revertOpenedFiles(self):
-        "Clear out any opened files from previous errors - hoping they are transient - except for change_map"
+        "Clear out any opened files from previous errors - hoping they are transient - except for change_map and checkpointed files"
+        # Check if there's a checkpoint for an in-progress changelist — if so, preserve those files
+        checkpoint = load_checkpoint()
+        if checkpoint:
+            self.logger.info("Checkpoint found for change %s — preserving %d opened files from previous attempt" % (
+                checkpoint.get('change'), len(checkpoint.get('processed_files', []))))
+            return  # Don't revert anything — the checkpoint tracks what was successfully processed
+
         if not self.options.change_map_file:
             with self.target.p4.at_exception_level(P4.P4.RAISE_NONE):
                 self.target.p4cmd('revert', "//%s/..." % self.target.P4CLIENT)
