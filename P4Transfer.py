@@ -1575,11 +1575,18 @@ class P4Target(P4Base):
 
     def _forceSyncFile(self, f):
         "Force-sync a file from both source and target to recover missing local files"
-        self.logger.warning("Force-syncing file from source: %s" % f.localFileRev())
-        self.src.p4cmd('sync', '-f', f.localFileRev())
-        self.logger.warning("Force-syncing file from target: %s" % f.localFile)
+        # NOTE: Order matters here. Both source and target workspaces map to the same local
+        # path, so whichever sync runs last wins on disk. We sync the target first (to refresh
+        # the target's have-list) and the source last (so the authoritative source content is
+        # what ends up on disk for the subsequent retry of _processOneFileRev).
+        # TODO: Consider replacing the target 'sync -f' with 'sync -k' to update the have-list
+        # without touching the disk — this would avoid the wasted I/O of writing the target
+        # revision just to overwrite it with the source revision.
+        self.logger.warning("Force-syncing have-list from target: %s" % f.localFile)
         with self.p4.at_exception_level(P4.P4.RAISE_NONE):
             self.p4cmd('sync', '-f', f.localFile)
+        self.logger.warning("Force-syncing file from source: %s" % f.localFileRev())
+        self.src.p4cmd('sync', '-f', f.localFileRev())
 
     def processChangeRevs(self, fileRevs, specialMoveRevs, srcFileLogs, sourceChangeNum=None):
         "Process all revisions in the change with per-file error recovery and checkpointing"
@@ -1641,9 +1648,12 @@ class P4Target(P4Base):
                     success = True
                     break
                 except (OSError, IOError, P4.P4Exception) as e:
-                    if not _is_enoent_error(e):
-                        raise  # Non-ENOENT errors propagate normally
                     lastError = e
+                    if not _is_enoent_error(e):
+                        self.logger.error(
+                            "Non-ENOENT error for %s: %s — recording as failed" % (
+                                f.depotFileRev(), str(e)))
+                        break  # don't retry unknown errors, but fall through to failedFiles.append
                     if attempt < maxAttempts:
                         self.logger.warning(
                             "ENOENT error on attempt %d/%d for %s: %s — force-syncing and retrying" % (
