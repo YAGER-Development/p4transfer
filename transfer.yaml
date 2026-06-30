@@ -60,7 +60,7 @@ mail_server:
 # Such values should be quoted (in order to be treated as strings)
 # -------------------------------------------------------------------------------
 # sleep_on_error_interval (Integer): How long (in minutes) to sleep when error is encountered in the script
-  sleep_on_error_interval: 2
+sleep_on_error_interval: 5
 
 # poll_interval (Integer): How long (in minutes) to wait between polling source server for new changes
 poll_interval: 5
