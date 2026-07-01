@@ -1,6 +1,7 @@
 # AGENTS instructions
 
 - Confirm that you have read these instructions.
+- Always ask for approval before modifying any files.
 
 ## Project Overview
 

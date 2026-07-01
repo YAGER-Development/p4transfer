@@ -2652,11 +2652,25 @@ class P4Transfer(object):
     def revertOpenedFiles(self):
         "Clear out any opened files from previous errors - hoping they are transient - except for change_map and checkpointed files"
         # Check if there's a checkpoint for an in-progress changelist — if so, preserve those files
+        # but consolidate them all into the default changelist so the resumed submit sees everything.
         checkpoint = load_checkpoint()
         if checkpoint:
             self.logger.info("Checkpoint found for change %s — preserving %d opened files from previous attempt" % (
                 checkpoint.get('change'), len(checkpoint.get('processed_files', []))))
-            return  # Don't revert anything — the checkpoint tracks what was successfully processed
+            # Move any files sitting in numbered pending changelists back to the default changelist
+            # so that the resumed run's fetch_change()/save_submit() picks them all up together.
+            openChanges = self.target.p4cmd('changes', '-s', 'pending', '-c', self.target.P4CLIENT)
+            for change in openChanges:
+                if not change['desc'].startswith(CHANGE_MAP_DESC):
+                    self.logger.info("Moving files from pending changelist %s back to default changelist for resume" % change['change'])
+                    # Reopen all files in this numbered changelist into the default changelist in one
+                    # command using a client pathspec, so the resumed fetch_change()/save_submit() sees them all.
+                    with self.target.p4.at_exception_level(P4.P4.RAISE_NONE):
+                        self.target.p4cmd('reopen', '-c', 'default', '//%s/...' % self.target.P4CLIENT)
+                    # Delete the now-empty numbered changelist
+                    with self.target.p4.at_exception_level(P4.P4.RAISE_NONE):
+                        self.target.p4cmd('change', '-d', change['change'])
+            return
 
         if not self.options.change_map_file:
             with self.target.p4.at_exception_level(P4.P4.RAISE_NONE):
