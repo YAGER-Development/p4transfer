@@ -99,7 +99,7 @@ def clean_workspace_root(workspace_root):
     print("  Workspace root cleaned.")
 
 
-def clean_log_files(script_dir):
+def clean_intermediate_files(script_dir):
     """Delete *.log files in the script's directory."""
     print(f"\n--- Cleaning log files in: {script_dir} ---")
     log_files = glob.glob(os.path.join(script_dir, "*.log"))
@@ -111,6 +111,15 @@ def clean_log_files(script_dir):
         os.remove(log_file)
     print(f"  Removed {len(log_files)} log file(s).")
 
+    print(f"\n--- Cleaning other files in: {script_dir} ---")
+    json_files = glob.glob(os.path.join(script_dir, "*.json"))
+    if not json_files:
+        print("  No json files found.")
+        return
+    for json_file in json_files:
+        print(f"  Removing: {json_file}")
+        os.remove(json_file)
+    print(f"  Removed {len(json_files)} log file(s).")
 
 def confirm(prompt="Are you sure you want to proceed? [y/N] "):
     """Ask for user confirmation. Returns True if confirmed."""
@@ -169,7 +178,8 @@ def main():
         clean_workspace_root(workspace_root)
 
     # Clean log files
-    clean_log_files(script_dir)
+    clean_intermediate_files(script_dir)
+
 
     print("\n=== Reset complete ===")
 
