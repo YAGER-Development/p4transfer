@@ -1841,7 +1841,7 @@ class P4Target(P4Base):
         """Replicate first change when historical start specified"""
 
         newChangeId = None
-        openedFiles = self.p4cmd('reconcile', '-meadI', '//%s/...' % self.p4.client)
+        openedFiles = self.p4cmd('reconcile', '-meadfI', '//%s/...' % self.p4.client)
         lenOpenedFiles = len(openedFiles)
         if lenOpenedFiles > 0:
             description = self.formatChangeDescription(
@@ -2468,7 +2468,7 @@ class P4Target(P4Base):
             ensureDirectory(os.path.dirname(fpath))
             with open(fpath, "a") as fh:
                 fh.write("sourceP4Port,sourceChangeNo,targetChangeNo\n")
-            output = self.p4cmd('reconcile', '-I', fpath)[0]
+            output = self.p4cmd('reconcile', '-fI', fpath)[0]
             if output['action'] == 'add':
                 self.p4cmd('reopen', '-t', 'text+CS32', fpath)
         chg = self.p4.fetch_change()
