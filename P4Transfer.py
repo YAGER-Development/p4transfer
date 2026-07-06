@@ -1739,10 +1739,15 @@ class P4Target(P4Base):
                     if '+' in chRev.type and 'l' in chRev.type.split('+')[1]:
                         result = self.p4cmd('reopen', '-t', chRev.type, ofile['depotFile'])
                         if "can't change +l type with reopen; use revert -k and then edit -t to change type." in str(result):
-                            self.logger.warning(f"Issue identified with file {ofile['depotFile']} suggesting to use 'revert -k' and type change.")
+                            self.logger.warning(f"Issue identified with file {ofile['depotFile']} trying to use 'revert -k' and handle type change.")
                             self.p4cmd('revert', '-k', ofile['depotFile'])
-                            self.p4cmd('add', '-f', '-I', '-t', chRev.type, ofile['depotFile'])
-                            self.p4cmd('edit', '-t', chRev.type, ofile['depotFile'])
+                            if chRev.action in ('delete', 'move/delete'):
+                                # File was opened for delete; restore have-list entry then re-delete with correct type
+                                self.p4cmd('sync', '-k', ofile['depotFile'])
+                                self.p4cmd('delete', '-v', '-t', chRev.type, ofile['depotFile'])
+                            else:
+                                self.p4cmd('add', '-f', '-I', '-t', chRev.type, ofile['depotFile'])
+                                self.p4cmd('edit', '-t', chRev.type, ofile['depotFile'])
                     else:
                         self.p4cmd('reopen', '-t', chRev.type, ofile['depotFile'])
 
