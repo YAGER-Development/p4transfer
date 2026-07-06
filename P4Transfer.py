@@ -146,15 +146,6 @@ class P4TFileTransferException(P4TException):
     pass
 
 
-def _is_enoent_error(exc):
-    """Check if an exception is a 'No such file or directory' error"""
-    if isinstance(exc, (OSError, IOError)):
-        return exc.errno == errno.ENOENT
-    if isinstance(exc, P4.P4Exception):
-        return 'No such file or directory' in str(exc)
-    return False
-
-
 def load_checkpoint():
     """Load checkpoint file if it exists, return dict or None"""
     if os.path.exists(CHECKPOINT_FILE):
@@ -1638,7 +1629,7 @@ class P4Target(P4Base):
             self.logger.debug('targ: %s' % f)
             self.currentFileContent = None
 
-            # Per-file retry logic for ENOENT errors
+            # Per-file retry logic.
             maxAttempts = 3
             success = False
             lastError = None
@@ -1649,19 +1640,14 @@ class P4Target(P4Base):
                     break
                 except (OSError, IOError, P4.P4Exception) as e:
                     lastError = e
-                    if not _is_enoent_error(e):
-                        self.logger.error(
-                            "Non-ENOENT error for %s: %s — recording as failed" % (
-                                f.depotFileRev(), str(e)))
-                        break  # don't retry unknown errors, but fall through to failedFiles.append
                     if attempt < maxAttempts:
                         self.logger.warning(
-                            "ENOENT error on attempt %d/%d for %s: %s — force-syncing and retrying" % (
+                            "Error on attempt %d/%d for %s: %s — force-syncing and retrying" % (
                                 attempt, maxAttempts, f.depotFileRev(), str(e)))
                         self._forceSyncFile(f)
                     else:
                         self.logger.error(
-                            "ENOENT error on attempt %d/%d for %s: %s — recording as failed" % (
+                            "Error on attempt %d/%d for %s: %s — recording as failed" % (
                                 attempt, maxAttempts, f.depotFileRev(), str(e)))
 
             if success:
