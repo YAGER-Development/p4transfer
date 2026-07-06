@@ -1729,11 +1729,13 @@ class P4Target(P4Base):
         """Make sure that all integrated filetypes are correct"""
         revDict = {}
         for chRev in fileRevs:
-            revDict[chRev.localFile] = chRev
+            key = chRev.localFile if self.options.case_sensitive else chRev.localFile.lower()
+            revDict[key] = chRev
         for ofile in openedFiles:
             localFile = self.localmap.translate(ofile['depotFile'])
-            if localFile and len(localFile) > 0 and localFile in revDict:
-                chRev = revDict[localFile]
+            lookupKey = localFile if self.options.case_sensitive else localFile.lower()
+            if localFile and len(localFile) > 0 and lookupKey in revDict:
+                chRev = revDict[lookupKey]
                 if chRev.type != ofile['type']:
                     # Can't just do a reopen to +l if working with a commit/edge environment
                     if '+' in chRev.type and 'l' in chRev.type.split('+')[1]:
