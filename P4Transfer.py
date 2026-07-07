@@ -1786,7 +1786,8 @@ class P4Target(P4Base):
                 self.checkWarnings()
             except P4.P4Exception as e:
                 re_resubmit = re.compile("Out of date files must be resolved or reverted.\n.*p4 submit -c ([0-9]+)")
-                m = re_resubmit.search(self.p4.errors[0])
+                errors_str = self.p4.errors[0] if self.p4.errors else str(e)
+                m = re_resubmit.search(errors_str)
                 if m and (self.renameOfDeletedFileEncountered or self.resolveDeleteEncountered):
                     cmd = ['sync']
                     for ofile in openedFiles:
@@ -1797,7 +1798,7 @@ class P4Target(P4Base):
                 else:  # Check for utf16 type problems and change them to binary to see if that works
                     re_transferProblems = re.compile(".*fix problems then use 'p4 submit -c ([0-9]+)'.\nSome file\\(s\\) could not be transferred from client")
                     re_translation = re.compile("Translation of file content failed near line [0-9]+ file (.*)")
-                    m = re_transferProblems.search(self.p4.errors[0])
+                    m = re_transferProblems.search(errors_str)
                     if not m:
                         raise e
                     chgNo = m.group(1)
