@@ -829,13 +829,45 @@ class ChangelistComparer(object):
 
     def listsEqual(self, srclist, targlist, filesToIgnore):
         "Compare two lists of changes, with an ignore list"
-        srcfiles = set([chRev.localFile for chRev in srclist if chRev.localFile not in filesToIgnore])
-        targfiles = set([chRev.localFile for chRev in targlist])
+        # YAGER START - [aigenerated] - 08/07/2026 - Debug listsEqual mismatches
+        srcfilesRaw = [chRev.localFile for chRev in srclist if chRev.localFile not in filesToIgnore]
+        targfilesRaw = [chRev.localFile for chRev in targlist]
+        srcfiles = set(srcfilesRaw)
+        targfiles = set(targfilesRaw)
+        # YAGER END - [aigenerated] - 08/07/2026 - Debug listsEqual mismatches
         if not self.caseSensitive:
-            srcfiles = set([escapeWildCards(x.lower()) for x in srcfiles])
-            targfiles = set([x.lower() for x in targfiles])
+            # YAGER START - [aigenerated] - 08/07/2026 - Debug listsEqual mismatches
+            srcfiles = set([escapeWildCards(x.lower()) for x in srcfilesRaw])
+            targfiles = set([x.lower() for x in targfilesRaw])
+            # YAGER END - [aigenerated] - 08/07/2026 - Debug listsEqual mismatches
         diffs = srcfiles.difference(targfiles)
         if diffs:
+            # YAGER START - [aigenerated] - 08/07/2026 - Debug listsEqual mismatches
+            self.logger.debug("listsEqual: caseSensitive=%s, srclist=%d, targlist=%d, diffs=%d" % (
+                self.caseSensitive, len(srclist), len(targlist), len(diffs)))
+            # Build a basename -> target chRev(s) index to surface near-matches (case/escape/path differences)
+            targByBase = {}
+            for chRev in targlist:
+                base = os.path.basename(chRev.localFile).lower()
+                targByBase.setdefault(base, []).append(chRev)
+            for d in sorted(diffs):
+                base = os.path.basename(d).lower()
+                # Find source chRev(s) whose transformed localFile equals the diff entry
+                srcMatches = []
+                for r in srclist:
+                    if r.localFile in filesToIgnore:
+                        continue
+                    transformed = escapeWildCards(r.localFile.lower()) if not self.caseSensitive else r.localFile
+                    if transformed == d:
+                        srcMatches.append(r)
+                self.logger.debug("listsEqual DIFF: '%s'" % d)
+                for r in srcMatches:
+                    self.logger.debug("  src: action=%s depotFile=%s localFile=%s" % (
+                        r.action, r.depotFile, r.localFile))
+                for r in targByBase.get(base, []):
+                    self.logger.debug("  targ(same-basename): action=%s depotFile=%s localFile=%s" % (
+                        r.action, r.depotFile, r.localFile))
+            # YAGER END - [aigenerated] - 08/07/2026 - Debug listsEqual mismatches
             return (False, "Replication failure: missing elements in target changelist:\n%s" % "\n    ".join([str(r) for r in diffs]))
         srcfiles = set(chRev for chRev in srclist if chRev.localFile not in filesToIgnore)
         targfiles = set(chRev for chRev in targlist)
