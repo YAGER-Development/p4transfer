@@ -120,6 +120,11 @@ def clean_intermediate_files(script_dir):
             print(f"  Removing: {file}")
             os.remove(file)
 
+def confirm(prompt="Are you sure you want to proceed? [y/N] "):
+    """Ask for user confirmation. Returns True if confirmed."""
+    response = input(prompt).strip().lower()
+    return response in ("y", "yes")
+
 def main():
     parser = argparse.ArgumentParser(
         description="Reset P4Transfer workspaces, local files, and logs for a clean state."
