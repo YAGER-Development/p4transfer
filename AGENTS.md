@@ -73,7 +73,7 @@ Note: Tests require a running Perforce server (`p4d`) and the `P4` (p4python) mo
 - Linter: **flake8** (config in `.flake8`: `max-line-length = 160`).
 - Follow PEP 8 style, respecting the project's 160-char line length.
 - Match existing code style in the file you are editing.
-- Wrap any blocks of code change lines within annotation comments in the form `YAGER START - [aigenerated] - <dd/mm/yyyy> - <Short description>` and `YAGER END <...>` respectively.
+- Wrap any consecutive lines (as well as single lines) containing code changes within annotation comments in the form `YAGER START - [aigenerated] - <dd/mm/yyyy> - <Short description>` and `YAGER END <...>` respectively.
 
 ## Boundaries
 

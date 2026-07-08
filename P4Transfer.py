@@ -1166,12 +1166,27 @@ class MoveTracker(object):
         "Track a move/delete"
         self.deletes[chRev.depotFile] = chRev
 
-    def getMoves(self, msg):
+        # YAGER START - [aigenerated] - 08/07/2026 - Keep paired move/delete chRev for validate
+    def getMoves(self, msg, keepPairedDeletes=False):
+        # YAGER END - [aigenerated] - 08/07/2026 - Keep paired move/delete chRev for validate
         "Return orphaned moves, or the move/add from add/delete pairs"
         specialMoves = []
+        # YAGER START - [aigenerated] - 08/07/2026 - Keep paired move/delete chRev for validate
+        # When keepPairedDeletes=True (used by validateSubmittedChange), the delete-side chRev
+        # of a matched move/add+move/delete pair is preserved (demoted to plain 'delete') so it
+        # can match against a source-side plain 'delete' at the same old path. This handles the
+        # case where the source did a delete+add but the target performed a real p4 move.
+        pairedDeletes = []
+        # YAGER END - [aigenerated] - 08/07/2026 - Keep paired move/delete chRev for validate
         for depotFile in self.adds:
             if depotFile in self.deletes:
                 self.logger.debug("%s: Matched move add/delete '%s'" % (msg, depotFile))
+                # YAGER START - [aigenerated] - 08/07/2026 - Keep paired move/delete chRev for validate
+                if keepPairedDeletes:
+                    pairedChRev = self.deletes[depotFile]
+                    pairedChRev.action = 'delete'
+                    pairedDeletes.append(pairedChRev)
+                # YAGER END - [aigenerated] - 08/07/2026 - Keep paired move/delete chRev for validate
                 del self.deletes[depotFile]
             else:
                 self.logger.debug("%s: Action move/add changed to add '%s'" % (msg, depotFile))
@@ -1184,6 +1199,9 @@ class MoveTracker(object):
             self.logger.debug("%s: Action move/delete changed to delete '%s'" % (msg, k))
             self.deletes[k].action = 'delete'
         results.extend([self.deletes[k] for k in self.deletes])
+        # YAGER START - [aigenerated] - 08/07/2026 - Keep paired move/delete chRev for validate
+        results.extend(pairedDeletes)
+        # YAGER END - [aigenerated] - 08/07/2026 - Keep paired move/delete chRev for validate
         return results, specialMoves
 
 
@@ -1940,7 +1958,9 @@ class P4Target(P4Base):
                             found = True
                             movetracker.trackAdd(chRev, integ.file)
         cc = ChangelistComparer(self.logger, caseSensitive=self.options.case_sensitive)
-        moveRevs, specialMoveRevs = movetracker.getMoves("validate")
+        # YAGER START - [aigenerated] - 08/07/2026 - Keep paired move/delete chRev for validate
+        moveRevs, specialMoveRevs = movetracker.getMoves("validate", keepPairedDeletes=True)
+        # YAGER END - [aigenerated] - 08/07/2026 - Keep paired move/delete chRev for validate
         targFileRevs.extend(moveRevs)
         result = cc.listsEqual(srcFileRevs, targFileRevs, self.filesToIgnore)
         if not result[0]:
