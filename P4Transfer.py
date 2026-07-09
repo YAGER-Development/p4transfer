@@ -1344,8 +1344,25 @@ class P4Source(P4Base):
         filesToLog = {}
         excludedFiles = []
         movetracker = MoveTracker(self.logger)
+        // YAGER START - aigenerated - 09/07/2026 - Fix file being wrongly excluded on case-insensitive servers, if depot path casing doesn't match the casing in the config file.
+        # On case-insensitive servers the depot path casing in 'describe' output may differ from
+        # the casing in the client view map (which was built from the stream spec or config).
+        # Build a lowercase fallback map once per change so that P4.Map.translate() — which is
+        # always case-sensitive on Linux — can still resolve these paths.
+        lowercaseLocalmap = None
+        if not self.options.case_sensitive:
+            lowerViewLines = [line.lower() for line in self.clientspec._view]
+            lowerClientmap = P4.Map(lowerViewLines)
+            ctr = P4.Map('//"' + self.clientspec._client.lower() + '/..."   "' +
+                         self.clientspec._root + '/..."')
+            lowercaseLocalmap = P4.Map.join(lowerClientmap, ctr)
+        // YAGER END - aigenerated - 09/07/2026 - Fix file being wrongly excluded on case-insensitive servers, if depot path casing doesn't match the casing in the config file.
         for (n, rev) in enumerate(change['rev']):
             localFile = self.localmap.translate(change['depotFile'][n])
+            // YAGER START - aigenerated - 09/07/2026 - Fix file being wrongly excluded on case-insensitive servers, if depot path casing doesn't match the casing in the config file.
+            if (not localFile or len(localFile) == 0) and lowercaseLocalmap:
+                localFile = lowercaseLocalmap.translate(change['depotFile'][n].lower())
+            // YAGER END - aigenerated - 09/07/2026 - Fix file being wrongly excluded on case-insensitive servers, if depot path casing doesn't match the casing in the config file.
             if localFile and len(localFile) > 0:
                 chRev = ChangeRevision(rev, change, n)
                 chRev.setLocalFile(localFile)

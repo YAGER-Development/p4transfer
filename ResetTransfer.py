@@ -119,6 +119,7 @@ def clean_intermediate_files(script_dir):
         if os.path.exists(file):
             print(f"  Removing: {file}")
             os.remove(file)
+    print(f"  Removed {len(files_to_clean)} other file(s).")
 
 def confirm(prompt="Are you sure you want to proceed? [y/N] "):
     """Ask for user confirmation. Returns True if confirmed."""
