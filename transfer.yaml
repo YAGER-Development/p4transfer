@@ -21,7 +21,7 @@ case_sensitive: false
 #    of included files is transferred.
 #
 # Note: maybe, we can leave this empty if we just start from whatever is the first submit on '//yes/main'.
-historical_start_change: 1436324
+historical_start_change:
 
 # Without this being 'true', almost no files get submitted to target. It seems like that's
 # because it can't resolve the files having been integrated from other stream (code drop). Setting this
