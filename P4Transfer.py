@@ -1230,6 +1230,7 @@ class SyncOutput(P4.OutputHandler):
         return P4.OutputHandler.HANDLED
 
 
+# noinspection D
 class P4Source(P4Base):
     "Functionality for reading from source Perforce repository"
 
@@ -1411,7 +1412,10 @@ class P4Source(P4Base):
                                     found = True
                                     movetracker.trackAdd(chRev, integ.file)
                             if not found:
-                                self.logger.warning(u"Failed to find integ record for move/add {}".format(flog.depotFile))
+                                # YAGER START - [aigenerated] - 14/08/2026 - Do not drop move/add revisions missing moved from integration
+                                self.logger.warning(u"Failed to find integ record for move/add {}. Adding revision anyway.".format(flog.depotFile))
+                                fileRevs.append(chRev)
+                                # YAGER END - [aigenerated] - 14/08/2026 - Do not drop move/add revisions missing moved from integration
                     else:
                         fileRevs.append(chRev)
                 # else:
@@ -1622,9 +1626,16 @@ class P4Target(P4Base):
         elif f.action == 'integrate':
             self.replicateIntegration(f)
         elif f.action == 'move/add':
-            self.moveAdd(f)
-            if f.numIntegrations() > 1:
-                self.replicateIntegration(f, afterAdd=True)
+            # YAGER START - [aigenerated] - 14/08/2026 - Handle 'move/add' without 'moved from' integrations
+            if f.hasMoveIntegrations():
+                self.moveAdd(f)
+                if f.numIntegrations() > 1:
+                    self.replicateIntegration(f, afterAdd=True)
+            elif f.hasIntegrations():
+                self.replicateBranch(f, dirty=True)
+            else:
+                self.moveAdd(f)
+            # YAGER END - [aigenerated] - 14/08/2026 - Handle 'move/add' without 'moved from' integrations
         elif f.action == 'archive':
             self.logger.warning("Ignoring archived revision: %s#%s" % (f.depotFile, f.rev))
             self.filesToIgnore.append(f.localFile)
@@ -1974,6 +1985,12 @@ class P4Target(P4Base):
                         if integ.how == 'moved from':
                             found = True
                             movetracker.trackAdd(chRev, integ.file)
+                    # YAGER START - [aigenerated] - 14/08/2026 - Include 'move/add' without 'moved from' integ in validation
+                    if not found:
+                        targFileRevs.append(chRev)
+                else:
+                    targFileRevs.append(chRev)
+                    # YAGER END - [aigenerated] - 14/08/2026 - Include 'move/add' without 'moved from' integ in validation
         cc = ChangelistComparer(self.logger, caseSensitive=self.options.case_sensitive)
         # YAGER START - [aigenerated] - 08/07/2026 - Keep paired move/delete chRev for validate
         moveRevs, specialMoveRevs = movetracker.getMoves("validate", keepPairedDeletes=True)
@@ -1999,9 +2016,10 @@ class P4Target(P4Base):
                 if file.getIntegration(ind).how == 'moved from':
                     break
                 ind += 1
-            assert(ind < file.numIntegrations())
-            if file.getIntegration(ind).localFile:
+            # YAGER START - [aigenerated] - 14/08/2026 - Safely check if moved from integration exists
+            if ind < file.numIntegrations() and file.getIntegration(ind).localFile:
                 doMove = True
+            # YAGER END - [aigenerated] - 14/08/2026 - Safely check if moved from integration exists
         if doMove:
             source = file.getIntegration(ind).localFile
             self.p4cmd('sync', '-f', file.localIntegSyncSource(ind))
