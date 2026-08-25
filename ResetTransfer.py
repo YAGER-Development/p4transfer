@@ -99,7 +99,7 @@ def clean_workspace_root(workspace_root):
     print("  Workspace root cleaned.")
 
 
-def clean_log_files(script_dir):
+def clean_intermediate_files(script_dir):
     """Delete *.log files in the script's directory."""
     print(f"\n--- Cleaning log files in: {script_dir} ---")
     log_files = glob.glob(os.path.join(script_dir, "*.log"))
@@ -111,12 +111,20 @@ def clean_log_files(script_dir):
         os.remove(log_file)
     print(f"  Removed {len(log_files)} log file(s).")
 
+    print(f"\n--- Cleaning other files in: {script_dir} ---")
+    files_to_clean = set()
+    files_to_clean.add(os.path.join(script_dir, ".p4transfer_failed_files.json"))
+    files_to_clean.add(os.path.join(script_dir, ".p4transfer_checkpoint.json"))
+    for file in files_to_clean:
+        if os.path.exists(file):
+            print(f"  Removing: {file}")
+            os.remove(file)
+    print(f"  Removed {len(files_to_clean)} other file(s).")
 
 def confirm(prompt="Are you sure you want to proceed? [y/N] "):
     """Ask for user confirmation. Returns True if confirmed."""
     response = input(prompt).strip().lower()
     return response in ("y", "yes")
-
 
 def main():
     parser = argparse.ArgumentParser(
@@ -169,7 +177,8 @@ def main():
         clean_workspace_root(workspace_root)
 
     # Clean log files
-    clean_log_files(script_dir)
+    clean_intermediate_files(script_dir)
+
 
     print("\n=== Reset complete ===")
 

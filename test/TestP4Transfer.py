@@ -1515,6 +1515,37 @@ class TestP4Transfer(TestP4TransferBase):
         filelog = self.target.p4.run_filelog('//depot/import/new/new_file')
         self.assertEqual(filelog[0].revisions[0].integrations[0].how, 'moved from')
 
+    # YAGER START - [aigenerated] - 14/08/2026 - Test move/add missing moved from integ record
+    def testMoveAddWithoutMovedFromIntegration(self):
+        """Test for Move/Add where integration records exist but no 'moved from' record"""
+        self.setupTransfer()
+        inside = localDirectory(self.source.client_root, "inside")
+        outside = localDirectory(self.source.client_root, "outside")
+
+        original_file = os.path.join(inside, 'original', 'original_file')
+        renamed_file = os.path.join(inside, 'new', 'new_file')
+        other_file = os.path.join(outside, 'new', 'other_file')
+        create_file(original_file, "Some content")
+        create_file(other_file, "Some other content")
+        self.source.p4cmd('add', '-tbinary', original_file, other_file)
+        self.source.p4cmd('submit', '-d', "adding original file and other file")
+
+        self.source.p4cmd('edit', original_file)
+        self.source.p4cmd('move', original_file, renamed_file)
+        self.source.p4cmd('integ', '-f', other_file, renamed_file)
+        self.source.p4cmd('resolve', '-at')
+        self.source.p4cmd('submit', '-d', "renaming file with integ")
+
+        # Obliterate the original file so the 'moved from' integ is gone, leaving only 'branch/copy from' integ
+        self.source.p4cmd('obliterate', '-y', original_file)
+
+        self.run_P4Transfer()
+        self.assertCounters(2, 1)
+
+        change = self.target.p4.run_describe('1')[0]
+        self.assertIn('//depot/import/new/new_file', change['depotFile'])
+    # YAGER END - [aigenerated] - 14/08/2026 - Test move/add missing moved from integ record
+
     # def testPartialTransferMoves(self):
     #     """Test for Move when partial_transfer=y"""
     #     self.setupTransfer()
